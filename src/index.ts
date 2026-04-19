@@ -15,6 +15,7 @@ import listingsRoutes from './routes/listings';
 import userRoutes from './routes/user';
 import subscriptionRoutes from './routes/subscription';
 import adminRoutes from './routes/admin';
+import reportsRoutes from './routes/reports';
 
 const app: Application = express();
 
@@ -82,6 +83,7 @@ app.use('/api/listings', listingsRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/reports', reportsRoutes);
 
 // API version info
 app.get('/api', (_req, res) => {
@@ -95,6 +97,7 @@ app.get('/api', (_req, res) => {
       user: '/api/user',
       subscription: '/api/subscription',
       admin: '/api/admin',
+      reports: '/api/reports',
     },
   });
 });
