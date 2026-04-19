@@ -2,7 +2,10 @@ import { db } from '../config/database';
 import { carListings, NewCarListing } from '../db/schema';
 import { eq, and, gte, lte, ilike, sql, desc, asc, count } from 'drizzle-orm';
 import { AppError } from '../middleware/error-handler';
-import { CarListing, PriceHistoryEntry } from '../types';
+import { CarListing, ListingSource, PriceHistoryEntry } from '../types';
+// `sql` is intentionally unused in the current selectors but retained for
+// future ranking queries. Keeping the import avoids constant import churn.
+void sql;
 
 export interface SearchFilters {
   make?: string;
@@ -23,7 +26,7 @@ export interface SearchFilters {
 const toCarListing = (row: typeof carListings.$inferSelect): CarListing => ({
   id: row.id,
   external_id: row.external_id,
-  source: row.source,
+  source: row.source as ListingSource,
   make: row.make,
   model: row.model,
   year: row.year,

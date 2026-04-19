@@ -1,13 +1,46 @@
+// Tier + status unions are kept in sync with the v2 schema enums in
+// `db/schema.ts`. Whenever you add an enum value there, widen these too.
+export type SubscriptionTier =
+  | 'free'
+  | 'pro'
+  | 'dealer'
+  | 'enterprise'
+  | 'watchlist'
+  | 'dealer_edge'
+  | 'inventory_iq'
+  | 'group';
+
+export type SubscriptionStatus =
+  | 'active'
+  | 'trialing'
+  | 'cancelled'
+  | 'past_due'
+  | 'paused';
+
+export type ListingSource =
+  | 'carsales'
+  | 'gumtree'
+  | 'facebook'
+  | 'drive'
+  | 'dealer_feed'
+  | 'auction_pickles'
+  | 'auction_manheim'
+  | 'auction_grays'
+  | 'auction_government'
+  | 'user_contribution'
+  | 'partner_feed'
+  | 'ppsr_reference';
+
 export interface User {
   id: string;
   email: string;
   password_hash: string;
   first_name: string;
   last_name: string;
-  subscription_tier: 'free' | 'pro' | 'dealer' | 'enterprise';
+  subscription_tier: SubscriptionTier;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
-  subscription_status: 'active' | 'cancelled' | 'past_due' | null;
+  subscription_status: SubscriptionStatus | null;
   subscription_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
@@ -17,7 +50,7 @@ export interface User {
 export interface CarListing {
   id: string;
   external_id: string;
-  source: 'carsales' | 'gumtree' | 'facebook' | 'drive';
+  source: ListingSource;
   make: string;
   model: string;
   year: number;

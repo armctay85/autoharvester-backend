@@ -163,13 +163,15 @@ export const updateUserProfile = async (
   };
 };
 
+import type { SubscriptionTier, SubscriptionStatus } from '../types';
+
 // Update subscription details
 export const updateUserSubscription = async (
   userId: string,
   updates: {
-    subscription_tier?: 'free' | 'pro' | 'dealer' | 'enterprise';
+    subscription_tier?: SubscriptionTier;
     stripe_subscription_id?: string | null;
-    subscription_status?: 'active' | 'cancelled' | 'past_due' | null;
+    subscription_status?: SubscriptionStatus | null;
     subscription_expires_at?: Date | null;
   }
 ): Promise<void> => {

@@ -30,8 +30,16 @@ router.post('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const report = await getReport(req.params.id);
-    if (!report) return res.status(404).json({ success: false, error: 'not_found' });
+    const id = req.params.id;
+    if (!id) {
+      res.status(400).json({ success: false, error: 'id_required' });
+      return;
+    }
+    const report = await getReport(id);
+    if (!report) {
+      res.status(404).json({ success: false, error: 'not_found' });
+      return;
+    }
     res.json({ success: true, report });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || 'fetch_failed' });

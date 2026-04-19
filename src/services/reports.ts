@@ -44,6 +44,7 @@ export async function createPendingReport(input: CreateReportInput): Promise<Rep
   };
 
   const [row] = await db.insert(reports).values(insert).returning();
+  if (!row) throw new Error('report_insert_failed');
   return row;
 }
 
@@ -138,6 +139,7 @@ export async function runReport(reportId: string): Promise<Report> {
       .where(eq(reports.id, reportId))
       .returning();
 
+    if (!updated) throw new Error('report_update_failed');
     return updated;
   } catch (err: any) {
     const [failed] = await db
@@ -148,6 +150,7 @@ export async function runReport(reportId: string): Promise<Report> {
       })
       .where(eq(reports.id, reportId))
       .returning();
+    if (!failed) throw err;
     return failed;
   }
 }

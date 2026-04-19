@@ -136,5 +136,6 @@ export async function upsertCanonical(input: CanonicalLookup & {
     })
     .returning();
 
+  if (!row) throw new Error('canonical_insert_failed');
   return row;
 }

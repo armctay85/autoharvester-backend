@@ -6,7 +6,8 @@ import { db } from '../config/database';
 import { users } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { env, getTierConfig } from '../config/env';
-import { User } from '../types';
+import type { SubscriptionStatus, SubscriptionTier } from '../types';
+void env;
 
 // Extend Express Request type
 declare global {
@@ -14,8 +15,8 @@ declare global {
     interface User {
       id: string;
       email: string;
-      subscription_tier: 'free' | 'pro' | 'dealer' | 'enterprise';
-      subscription_status: 'active' | 'cancelled' | 'past_due' | null;
+      subscription_tier: SubscriptionTier;
+      subscription_status: SubscriptionStatus | null;
     }
   }
 }
@@ -98,7 +99,7 @@ export const requireAuth = (req: Request, res: Response, next: NextFunction): vo
 };
 
 // Middleware to check subscription tier
-export const requireTier = (...allowedTiers: Array<'free' | 'pro' | 'dealer' | 'enterprise'>) => {
+export const requireTier = (...allowedTiers: Array<SubscriptionTier>) => {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.isAuthenticated()) {
       res.status(401).json({ error: 'Unauthorized', message: 'Please log in' });

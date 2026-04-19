@@ -267,14 +267,15 @@ const handleSubscriptionUpdated = async (subscription: Stripe.Subscription): Pro
   const priceId = subscription.items.data[0]?.price.id;
 
   // Determine tier from price ID
-  let tier: 'free' | 'pro' | 'dealer' | 'enterprise' = user.subscription_tier;
+  // Tier is the full v2 union (legacy values still accepted; see types/index.ts).
+  let tier: import('../types').SubscriptionTier = user.subscription_tier;
   if (priceId === STRIPE_PRICES.pro.monthly || priceId === STRIPE_PRICES.pro.yearly) {
     tier = 'pro';
   } else if (priceId === STRIPE_PRICES.dealer.monthly || priceId === STRIPE_PRICES.dealer.yearly) {
     tier = 'dealer';
   }
 
-  let status: 'active' | 'cancelled' | 'past_due' | null = user.subscription_status;
+  let status: import('../types').SubscriptionStatus | null = user.subscription_status;
   if (subscription.status === 'active') {
     status = 'active';
   } else if (subscription.status === 'canceled') {
