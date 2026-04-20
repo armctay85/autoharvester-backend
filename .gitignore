@@ -41,3 +41,6 @@ coverage/
 .cache/
 temp/
 tmp/
+.tsc-out.txt
+.local-stripe-prices.txt
+
