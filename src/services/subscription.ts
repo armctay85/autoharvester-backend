@@ -111,6 +111,61 @@ export const createCheckout = async (
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Guest subscription checkout (no prior user required)
+//
+//  We accept an email + tier + interval from the marketing site and hand the
+//  shopper straight to Stripe-hosted checkout. Stripe creates the customer on
+//  completion; our `handleCheckoutCompleted` webhook provisions (or links) the
+//  matching user row. This lets us charge for Watchlist / Dealer Edge etc.
+//  before we ship a full auth UI.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const createGuestSubscriptionCheckout = async (
+  email: string,
+  tier: SubscriptionTierKey,
+  interval: BillingInterval,
+  successUrl: string,
+  cancelUrl: string,
+): Promise<{ sessionId: string; url: string }> => {
+  if (!isStripeConfigured()) {
+    throw new AppError(
+      'Billing is not yet configured on this environment.',
+      503,
+      'STRIPE_NOT_CONFIGURED',
+    );
+  }
+  const priceId = getPriceIdForPlan(tier, interval);
+  if (!priceId) {
+    throw new AppError(
+      `No Stripe price configured for ${tier}/${interval}. Run \`npm run stripe:setup\` and set the env var.`,
+      503,
+      'PRICE_ID_MISSING',
+    );
+  }
+  const plan = SUBSCRIPTION_PLANS.find((p) => p.tier === tier && p.interval === interval);
+
+  const session = await createCheckoutSession(
+    '',
+    priceId,
+    successUrl,
+    cancelUrl,
+    {
+      mode: 'subscription',
+      trialDays: plan?.trialDays,
+      customerEmail: email,
+      metadata: {
+        kind: 'subscription',
+        tier,
+        interval,
+        guest_email: email.toLowerCase(),
+      },
+    },
+  );
+
+  return { sessionId: session.id, url: session.url! };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  One-off Vehicle Intelligence Report checkout
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -318,12 +373,62 @@ const handleCheckoutCompleted = async (session: Stripe.Checkout.Session): Promis
   const customerId = session.customer as string;
   const subscriptionId = session.subscription as string;
 
-  const user = await db.query.users.findFirst({
+  // Guest flow: no user exists yet for this Stripe customer. Provision one
+  // from the email Stripe collected so that (a) subscription state has a home
+  // and (b) the user can sign in later with magic-link / password reset.
+  let user = await db.query.users.findFirst({
     where: eq(users.stripe_customer_id, customerId),
   });
+
   if (!user) {
-    console.error(`[stripe webhook] no user for customer: ${customerId}`);
-    return;
+    const guestEmail =
+      session.customer_details?.email?.toLowerCase() ??
+      session.customer_email?.toLowerCase() ??
+      (session.metadata?.guest_email ? session.metadata.guest_email.toLowerCase() : null);
+
+    if (!guestEmail) {
+      console.error(
+        `[stripe webhook] cannot provision guest user — no email on session ${session.id}`,
+      );
+      return;
+    }
+
+    // Reuse existing user row if this email already signed up some other way.
+    const existingByEmail = await db.query.users.findFirst({
+      where: eq(users.email, guestEmail),
+    });
+    if (existingByEmail) {
+      await db
+        .update(users)
+        .set({ stripe_customer_id: customerId })
+        .where(eq(users.id, existingByEmail.id));
+      user = { ...existingByEmail, stripe_customer_id: customerId };
+    } else {
+      // Split "First Last" from Stripe into first/last for our schema.
+      const fullName = session.customer_details?.name ?? '';
+      const nameParts = fullName.trim().split(/\s+/);
+      const firstName = nameParts[0] || null;
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
+
+      const [created] = await db
+        .insert(users)
+        .values({
+          email: guestEmail,
+          first_name: firstName,
+          last_name: lastName,
+          phone: session.customer_details?.phone ?? null,
+          stripe_customer_id: customerId,
+          subscription_status: 'active',
+          email_verified_at: new Date(),
+        })
+        .returning();
+      if (!created) {
+        console.error(`[stripe webhook] failed to create guest user for ${guestEmail}`);
+        return;
+      }
+      user = created;
+      console.log(`[stripe webhook] provisioned guest user=${user.id} email=${guestEmail}`);
+    }
   }
 
   const subscription = await getSubscription(subscriptionId);

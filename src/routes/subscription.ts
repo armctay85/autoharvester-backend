@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   getSubscriptionPlans,
   createCheckout,
+  createGuestSubscriptionCheckout,
   createReportCheckout,
   createPortalSession,
   getSubscriptionStatus,
@@ -21,6 +22,15 @@ const router = Router();
 const checkoutSchema = z.object({
   // Canonical v2 tier names + 'pro'/'dealer' kept for legacy clients
   tier: z.enum(['watchlist', 'dealer_edge', 'inventory_iq', 'group', 'pro', 'dealer']),
+  interval: z.enum(['month', 'year']),
+});
+
+const guestCheckoutSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  // Only the canonical 5-SKU set is valid for guest flow — we don't accept
+  // legacy `pro`/`dealer` aliases here so the marketing site and backend
+  // can never diverge on published pricing.
+  tier: z.enum(['watchlist', 'dealer_edge', 'inventory_iq', 'group']),
   interval: z.enum(['month', 'year']),
 });
 
@@ -69,6 +79,23 @@ router.post(
     const cancelUrl = `${env.FRONTEND_URL}/pricing`;
 
     const checkout = await createCheckout(req.user!.id, tier, parsed.interval, successUrl, cancelUrl);
+    res.json({ sessionId: checkout.sessionId, url: checkout.url });
+  }),
+);
+
+// ─── Guest subscription checkout (no auth required) ────────────────────────
+//
+// Accepts { email, tier, interval } and returns a Stripe Checkout URL. The
+// webhook handler provisions (or links) the matching user row on completion.
+
+router.post(
+  '/checkout/guest',
+  apiLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { email, tier, interval } = guestCheckoutSchema.parse(req.body);
+    const successUrl = `${env.FRONTEND_URL}/subscription/success?session_id={CHECKOUT_SESSION_ID}&tier=${tier}&interval=${interval}`;
+    const cancelUrl = `${env.FRONTEND_URL}/pricing`;
+    const checkout = await createGuestSubscriptionCheckout(email, tier, interval, successUrl, cancelUrl);
     res.json({ sessionId: checkout.sessionId, url: checkout.url });
   }),
 );

@@ -36,6 +36,15 @@ export const initializePassport = (): passport.Authenticator => {
             return done(null, false, { message: 'Invalid email or password' });
           }
 
+          // Guest-provisioned users (created via Stripe checkout) have no
+          // password yet — they must use the magic-link / reset flow to set
+          // one before they can sign in with a password.
+          if (!user.password_hash) {
+            return done(null, false, {
+              message: 'This account has no password yet — use "Reset password" to set one.',
+            });
+          }
+
           const isValidPassword = await bcrypt.compare(password, user.password_hash);
 
           if (!isValidPassword) {

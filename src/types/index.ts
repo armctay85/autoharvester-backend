@@ -34,9 +34,12 @@ export type ListingSource =
 export interface User {
   id: string;
   email: string;
-  password_hash: string;
-  first_name: string;
-  last_name: string;
+  // Nullable for guest-provisioned users created via Stripe checkout first.
+  // These rows are later upgraded with a password via the magic-link / reset
+  // flow. Normal signup always sets this.
+  password_hash: string | null;
+  first_name: string | null;
+  last_name: string | null;
   subscription_tier: SubscriptionTier;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;

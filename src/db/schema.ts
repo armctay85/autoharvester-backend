@@ -101,9 +101,11 @@ export const dealerTierEnum = pgEnum('dealer_tier', [
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: varchar('email', { length: 255 }).notNull().unique(),
-  password_hash: varchar('password_hash', { length: 255 }).notNull(),
-  first_name: varchar('first_name', { length: 100 }).notNull(),
-  last_name: varchar('last_name', { length: 100 }).notNull(),
+  // Nullable so guest Stripe-checkout-first users can land in this table with
+  // just an email; they can set a password later via the magic-link flow.
+  password_hash: varchar('password_hash', { length: 255 }),
+  first_name: varchar('first_name', { length: 100 }),
+  last_name: varchar('last_name', { length: 100 }),
   phone: varchar('phone', { length: 32 }),
   subscription_tier: subscriptionTierEnum('subscription_tier').notNull().default('free'),
   stripe_customer_id: varchar('stripe_customer_id', { length: 255 }),
@@ -112,6 +114,7 @@ export const users = pgTable('users', {
   subscription_expires_at: timestamp('subscription_expires_at', { withTimezone: true }),
   is_dealer: boolean('is_dealer').notNull().default(false),
   dealer_id: uuid('dealer_id'),
+  email_verified_at: timestamp('email_verified_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   last_login_at: timestamp('last_login_at', { withTimezone: true }),
