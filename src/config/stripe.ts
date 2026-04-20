@@ -73,20 +73,43 @@ export const createCheckoutSession = async (
   priceId: string,
   successUrl: string,
   cancelUrl: string,
-  opts: { mode?: 'subscription' | 'payment'; trialDays?: number; metadata?: Record<string, string> } = {},
+  opts: {
+    mode?: 'subscription' | 'payment';
+    trialDays?: number;
+    metadata?: Record<string, string>;
+    customerEmail?: string;
+    allowPromotionCodes?: boolean;
+  } = {},
 ): Promise<Stripe.Checkout.Session> => {
   const client = getStripe();
   if (!client) throw new Error('Stripe not configured');
   const mode = opts.mode ?? 'subscription';
   const params: Stripe.Checkout.SessionCreateParams = {
-    customer: customerId,
     payment_method_types: ['card'],
     line_items: [{ price: priceId, quantity: 1 }],
     mode,
     success_url: successUrl,
     cancel_url: cancelUrl,
     metadata: opts.metadata,
+    allow_promotion_codes: opts.allowPromotionCodes ?? true,
   };
+
+  // Stripe requires EITHER a customer id OR (optionally) a customer_email
+  // hint — never an empty `customer` string. Empty string triggers a
+  // `resource_missing` 400.
+  if (customerId) {
+    params.customer = customerId;
+  } else if (opts.customerEmail) {
+    params.customer_email = opts.customerEmail;
+  }
+
+  // For guest one-off payments, always collect an email so we can deliver
+  // the receipt / report PDF. Stripe surfaces this back in
+  // session.customer_details.email.
+  if (mode === 'payment' && !customerId) {
+    params.customer_creation = 'always';
+  }
+
   if (mode === 'subscription' && opts.trialDays) {
     params.subscription_data = { trial_period_days: opts.trialDays };
   }

@@ -211,6 +211,9 @@ export const reports = pgTable(
     requested_state: varchar('requested_state', { length: 4 }),
     status: reportStatusEnum('status').notNull().default('pending'),
     stripe_payment_intent: varchar('stripe_payment_intent', { length: 255 }),
+    stripe_checkout_session: varchar('stripe_checkout_session', { length: 255 }),
+    customer_email: varchar('customer_email', { length: 255 }),
+    email_sent_at: timestamp('email_sent_at', { withTimezone: true }),
     price_cents: integer('price_cents').notNull().default(1900),
     ppsr_payload: jsonb('ppsr_payload').notNull().default('{}'),
     nevdis_payload: jsonb('nevdis_payload').notNull().default('{}'),
@@ -224,6 +227,7 @@ export const reports = pgTable(
   (t) => ({
     userIdx: index('reports_user_idx').on(t.user_id),
     statusIdx: index('reports_status_idx').on(t.status),
+    checkoutSessionIdx: index('reports_checkout_session_idx').on(t.stripe_checkout_session),
   })
 );
 

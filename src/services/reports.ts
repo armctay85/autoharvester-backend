@@ -5,6 +5,7 @@ import { getPpsrProvider } from './ppsr';
 import { getNevdisProvider, type NevdisCheckResult } from './nevdis';
 import { currentMarketMedian } from './trend';
 import { upsertCanonical, normaliseVin, normaliseRego, normaliseState } from './canonical';
+import { sendReportReadyEmail } from './report-email';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Vehicle Intelligence Report — the killer SKU.
@@ -212,6 +213,14 @@ export async function runReport(reportId: string): Promise<Report> {
       .returning();
 
     if (!updated) throw new Error('report_update_failed');
+
+    // Fire-and-forget email delivery. Failures here are logged inside
+    // sendReportReadyEmail and leave email_sent_at null, so a sweeper
+    // can retry without corrupting the report itself.
+    void sendReportReadyEmail(updated.id).catch((e) => {
+      console.error(`[reports] post-ready email dispatch threw for ${updated.id}:`, e);
+    });
+
     return updated;
   } catch (err: any) {
     const [failed] = await db

@@ -171,6 +171,7 @@ export const createReportCheckout = async (
     cancelUrl,
     {
       mode: 'payment',
+      customerEmail,
       metadata: {
         kind: 'report',
         report_id: reportRow.id,
@@ -282,13 +283,27 @@ const handleCheckoutCompleted = async (session: Stripe.Checkout.Session): Promis
       typeof session.payment_intent === 'string'
         ? session.payment_intent
         : session.payment_intent?.id;
-    if (piId) {
-      await db
-        .update(reports)
-        .set({ stripe_payment_intent: piId })
-        .where(eq(reports.id, reportId));
-    }
-    // Kick off fulfilment (PPSR + NEVDIS + market value).
+
+    // Capture delivery email from Stripe checkout — this is what the user
+    // typed in at the Stripe-hosted form. Without it we can't email the
+    // report. Prefer the customer_details value (what the user typed) over
+    // session.customer_email (legacy hint).
+    const deliveryEmail =
+      session.customer_details?.email?.toLowerCase() ??
+      session.customer_email?.toLowerCase() ??
+      null;
+
+    await db
+      .update(reports)
+      .set({
+        stripe_payment_intent: piId ?? null,
+        stripe_checkout_session: session.id,
+        customer_email: deliveryEmail,
+      })
+      .where(eq(reports.id, reportId));
+
+    // Kick off fulfilment (PPSR + NEVDIS + market value). The email is sent
+    // inside runReport once status flips to 'ready'.
     runReport(reportId).catch((err) => {
       console.error(`[stripe webhook] runReport ${reportId} failed:`, err);
     });
