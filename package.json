@@ -15,7 +15,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/services/__tests__/*.test.ts",
     "digest:run": "tsx src/scripts/digest-cron.ts",
-    "digest:dry": "DIGEST_DRY_RUN=true tsx src/scripts/digest-cron.ts"
+    "digest:dry": "DIGEST_DRY_RUN=true tsx src/scripts/digest-cron.ts",
+    "stripe:setup": "tsx src/scripts/setup-stripe.ts",
+    "stripe:setup:test": "tsx src/scripts/setup-stripe.ts"
   },
   "keywords": [
     "cars",
