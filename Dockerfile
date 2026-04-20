@@ -19,13 +19,16 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist ./dist
-# tsx needed at runtime ONLY for digest cron + stripe setup; keep slim by
-# allowing both the prod boot (`node dist/index.js`) and `tsx`-based scripts
-# (`npm run digest:run`, `npm run stripe:setup`) to work.
-RUN npm install tsx --omit-optional --no-save
+# Drizzle config + schema are needed at runtime for the boot-time
+# `drizzle-kit push:pg` invocation that syncs the database schema before the
+# app starts. tsx runs the digest cron + stripe setup scripts; drizzle-kit
+# is the schema sync tool.
+COPY drizzle.config.ts ./
+COPY src/db ./src/db
+RUN npm install tsx drizzle-kit --omit-optional --no-save
 
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD wget -q -O- http://localhost:3001/health || exit 1
 
-CMD ["npm", "run", "start"]
+CMD ["npm", "run", "start:prod"]
