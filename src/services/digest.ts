@@ -143,11 +143,18 @@ export async function runWatchlistDigest(
     .where(eq(priceAlerts.is_active, true));
 
   // 2. Group alerts by user.
+  // first_name is nullable (guest-provisioned users created via Stripe
+  // checkout don't have one yet); fall back to "there" so the email greeting
+  // still reads naturally.
   type Row = (typeof rows)[number];
   const byUser = new Map<string, { email: string; first_name: string; alerts: PriceAlert[] }>();
   for (const r of rows) {
     if (!byUser.has(r.userId)) {
-      byUser.set(r.userId, { email: r.email, first_name: r.first_name, alerts: [] });
+      byUser.set(r.userId, {
+        email: r.email,
+        first_name: r.first_name ?? 'there',
+        alerts: [],
+      });
     }
     byUser.get(r.userId)!.alerts.push(r.alert);
   }
