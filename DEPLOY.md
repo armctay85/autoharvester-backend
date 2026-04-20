@@ -43,9 +43,15 @@ Save both — you'll paste them into Railway next.
    DATABASE_URL=<your Neon URL>
    JWT_SECRET=<from step 2>
    SESSION_SECRET=<from step 2>
-   FRONTEND_URL=https://autoharvester.vercel.app
+   FRONTEND_URL=https://autoharvester.com.au
    NODE_ENV=production
    PORT=3001
+
+   # Email provider — 'log' is fine for launch; swap for resend once signed up.
+   EMAIL_PROVIDER=log
+   # EMAIL_PROVIDER=resend
+   # RESEND_API_KEY=re_...
+   EMAIL_FROM=Autoharvester <hello@autoharvester.com.au>
    ```
 5. Wait for first deploy. `/health` should return 200.
 6. **Settings → Networking → Generate domain.** Copy the URL (e.g. `https://autoharvester-backend.up.railway.app`).
@@ -113,19 +119,21 @@ Add the 9 `STRIPE_PRICE_*` vars + `STRIPE_SECRET_KEY` to the Railway environment
 
 ---
 
-## 6. Run database migration
+## 6. Database schema sync
 
-Once `DATABASE_URL` is wired:
+The included `Procfile` runs `drizzle-kit push:pg` on every deploy's **release** phase, so the schema (and any new columns, like the `customer_email` + `email_sent_at` added on the `reports` table for report-ready delivery) is applied automatically on first deploy.
+
+```
+release: npx drizzle-kit push:pg --config=./drizzle.config.ts
+```
+
+If your platform doesn't honour Procfile release phases (rare — Railway and Render both do), run this once manually from your machine:
 
 ```bash
-# Locally, against the Neon DB
-DATABASE_URL=<neon url> npm run db:migrate
+DATABASE_URL=<neon url> npm run db:push
 ```
 
-Or use Railway's **release** command, which the included `Procfile` already declares:
-```
-release: npx drizzle-kit migrate
-```
+> `push:pg` is the greenfield-friendly path — it reconciles the schema directly. Once you have production data you care about, switch to the migration workflow (`npm run db:generate` → commit → `npm run db:migrate`).
 
 ---
 
@@ -134,10 +142,12 @@ release: npx drizzle-kit migrate
 In the `autoharvester` (frontend) Vercel project, add:
 
 ```
-NEXT_PUBLIC_API_URL=https://<your-railway-url>
+NEXT_PUBLIC_API_BASE=https://<your-railway-url>
 ```
 
-Then redeploy the frontend. The pricing page CTAs and report-checkout buttons will hit the backend.
+> Note: the frontend reads `NEXT_PUBLIC_API_BASE` (not `_API_URL`). See `autoharvester/.env.example`.
+
+Then redeploy the frontend. The pricing page CTAs and the Vehicle Intelligence Report form will hit the backend. Until this env var is set, the report button renders a disabled "Reports go live as soon as the backend is wired" state — no broken redirects.
 
 ---
 
@@ -175,6 +185,18 @@ curl -X POST https://<railway-url>/api/subscription/checkout/report \
   -d '{"vin":"WVWZZZ1JZ3W386752"}'
 # → {"sessionId":"cs_...","url":"https://checkout.stripe.com/...","reportId":"..."}
 ```
+
+## End-to-end smoke test (pay a test $0.50)
+
+In Stripe **test** mode (not live), open the checkout URL you got above in a browser, pay with `4242 4242 4242 4242 / any future date / any CVC / any postcode`. Verify:
+
+1. Webhook hits `/api/subscription/webhook` (Stripe dashboard → Webhooks → shows 200).
+2. Railway logs show `[stripe webhook] checkout.session.completed` and `[reports] runReport` completing.
+3. `GET /api/reports/:reportId` returns `status: 'ready'`.
+4. Log line `[email/log] to=<your email> subject="Your Vehicle Intelligence Report..."` — that proves report-email rendering worked without needing a Resend key.
+5. On the Stripe success redirect, `https://<frontend>/report/ready?report_id=...&session_id=...` renders the confirmation page.
+
+Only after all five pass should you flip `EMAIL_PROVIDER=resend` and `STRIPE_SECRET_KEY=sk_live_...` for real traffic.
 
 ---
 
