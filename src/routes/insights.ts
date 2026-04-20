@@ -18,6 +18,10 @@ import {
   narrateDealerAlerts,
   narrateTrend,
 } from '../services/ai-narrative';
+import { toCsv, csvAttachmentDisposition } from '../services/csv';
+import { db } from '../config/database';
+import { carListings } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  /api/insights — combined trend, finder, depreciation + dealer alerts
@@ -253,6 +257,125 @@ router.get(
       narrative,
       ai_enabled: aiEnabled(),
     });
+  })
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CSV exports
+//
+//  Two endpoints:
+//    GET /dealer/:dealerId/alerts.csv  → priced-against-market dealer report
+//    GET /dealer/:dealerId/inventory.csv → flat inventory snapshot
+//
+//  Both return text/csv with a Content-Disposition attachment header so the
+//  browser downloads them. Cron-friendly: ?token=… is accepted as an alt to
+//  cookie auth (wired separately in the dealer dashboard).
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get(
+  '/dealer/:dealerId/alerts.csv',
+  apiLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const dealerId = req.params.dealerId;
+    if (!dealerId) {
+      res.status(400).json({ error: 'dealerId_required' });
+      return;
+    }
+    const alerts = await alertsForDealer(dealerId);
+    const csv = toCsv(
+      alerts.map((a) => ({
+        listing_id: a.listingId,
+        external_id: a.externalId,
+        make: a.make,
+        model: a.model,
+        year: a.year,
+        listing_price_aud: a.listingPriceAud,
+        market_median_aud: a.marketMedianAud,
+        delta_aud: a.deltaAud,
+        delta_pct: a.deltaPct,
+        band: a.band,
+        trend_direction: a.trendDirection,
+        trend_velocity_pct_per_month: a.trendVelocityPctPerMonth,
+        recommendation: a.recommendation,
+      })),
+      [
+        'listing_id',
+        'external_id',
+        'make',
+        'model',
+        'year',
+        'listing_price_aud',
+        'market_median_aud',
+        'delta_aud',
+        'delta_pct',
+        'band',
+        'trend_direction',
+        'trend_velocity_pct_per_month',
+        'recommendation',
+      ]
+    );
+    const filename = `dealer-${dealerId.slice(0, 8)}-alerts-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', csvAttachmentDisposition(filename));
+    res.send(csv);
+  })
+);
+
+router.get(
+  '/dealer/:dealerId/inventory.csv',
+  apiLimiter,
+  asyncHandler(async (req: Request, res: Response) => {
+    const dealerId = req.params.dealerId;
+    if (!dealerId) {
+      res.status(400).json({ error: 'dealerId_required' });
+      return;
+    }
+    const rows = await db
+      .select({
+        id: carListings.id,
+        external_id: carListings.external_id,
+        make: carListings.make,
+        model: carListings.model,
+        year: carListings.year,
+        price: carListings.price,
+        odometer: carListings.odometer,
+        transmission: carListings.transmission,
+        fuel_type: carListings.fuel_type,
+        body_type: carListings.body_type,
+        state: carListings.state,
+        location: carListings.location,
+        listing_url: carListings.listing_url,
+        first_seen_at: carListings.first_seen_at,
+        last_seen_at: carListings.last_seen_at,
+        is_active: carListings.is_active,
+        is_sold: carListings.is_sold,
+      })
+      .from(carListings)
+      .where(and(eq(carListings.source_dealer_id, dealerId), eq(carListings.is_active, true)));
+
+    const csv = toCsv(rows, [
+      'id',
+      'external_id',
+      'make',
+      'model',
+      'year',
+      'price',
+      'odometer',
+      'transmission',
+      'fuel_type',
+      'body_type',
+      'state',
+      'location',
+      'listing_url',
+      'first_seen_at',
+      'last_seen_at',
+      'is_active',
+      'is_sold',
+    ]);
+    const filename = `dealer-${dealerId.slice(0, 8)}-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', csvAttachmentDisposition(filename));
+    res.send(csv);
   })
 );
 

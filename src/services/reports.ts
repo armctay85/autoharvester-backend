@@ -2,6 +2,8 @@ import { db } from '../config/database';
 import { reports, type NewReport, type Report } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { getPpsrProvider } from './ppsr';
+import { getNevdisProvider, type NevdisCheckResult } from './nevdis';
+import { currentMarketMedian } from './trend';
 import { upsertCanonical, normaliseVin, normaliseRego, normaliseState } from './canonical';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,15 +53,48 @@ export async function createPendingReport(input: CreateReportInput): Promise<Rep
 export interface ReportSummary {
   headline: 'clear' | 'caution' | 'do_not_buy';
   reasons: string[];
-  market_value: { low: number; mid: number; high: number; basis: string };
+  market_value: { low: number; mid: number; high: number; basis: string; sample_size?: number };
+  registration: {
+    states_registered: string[];
+    state_transfer_count: number;
+    odometer_inconsistency: boolean;
+    last_known_km?: number;
+  };
   recommended_action: string;
   generated_at: string;
 }
 
-function rangeFromCanonicalMock(make?: string, model?: string, year?: number) {
-  // Placeholder market band — replace with real query against canonical + sold history
+async function rangeFromMarket(make?: string, model?: string, year?: number) {
+  // Try the live market median against the canonical universe first; fall
+  // back to a make/year heuristic when there are no comps. The +/- 10%
+  // band mirrors the bands used by the dealer alerts engine.
+  if (make && model) {
+    try {
+      const med = await currentMarketMedian(make, model, year ?? null);
+      if (med && med > 0) {
+        return {
+          low: Math.round(med * 0.9),
+          mid: Math.round(med),
+          high: Math.round(med * 1.1),
+          basis: 'live_active_listings_90d',
+        };
+      }
+    } catch {
+      // Fall through to heuristic.
+    }
+  }
   const base = 25000 + (year ? Math.max(0, year - 2010) * 1500 : 0);
-  return { low: base * 0.85, mid: base, high: base * 1.15, basis: 'mock_pre_partner' };
+  return { low: base * 0.85, mid: base, high: base * 1.15, basis: 'segment_heuristic_no_comps' };
+}
+
+function summariseRegistration(nev: NevdisCheckResult): ReportSummary['registration'] {
+  const last = nev.odometer_history.at(-1);
+  return {
+    states_registered: Array.from(new Set(nev.registrations.map((r) => r.state))),
+    state_transfer_count: nev.state_transfer_count,
+    odometer_inconsistency: nev.odometer_inconsistency,
+    last_known_km: last?.reading_km,
+  };
 }
 
 export async function runReport(reportId: string): Promise<Report> {
@@ -73,24 +108,35 @@ export async function runReport(reportId: string): Promise<Report> {
     .where(eq(reports.id, reportId));
 
   try {
-    const ppsr = await getPpsrProvider().check({
+    // Run PPSR + NEVDIS in parallel — they're independent providers and
+    // jointly compose the certificate body. If NEVDIS fails we still ship
+    // the report with PPSR-only findings (clearly flagged).
+    const reqLookup = {
       vin: row.requested_vin || undefined,
       rego: row.requested_rego || undefined,
       state: row.requested_state || undefined,
-    });
+    };
+    const [ppsrRes, nevdisRes] = await Promise.allSettled([
+      getPpsrProvider().check(reqLookup),
+      getNevdisProvider().check(reqLookup),
+    ]);
 
-    // We don't yet have NEVDIS, but we can still seed a canonical row from
-    // PPSR vehicle hints when present.
+    if (ppsrRes.status !== 'fulfilled') throw ppsrRes.reason;
+    const ppsr = ppsrRes.value;
+    const nevdis = nevdisRes.status === 'fulfilled' ? nevdisRes.value : null;
+
+    // Seed canonical row from the richer of (NEVDIS, PPSR) vehicle hints.
     let canonicalId: string | null = row.vehicle_canonical_id;
-    if (!canonicalId && (ppsr.vehicle.vin || (ppsr.vehicle.rego && ppsr.vehicle.state))) {
+    const vehicleHints = nevdis?.vehicle ?? ppsr.vehicle;
+    if (!canonicalId && (vehicleHints.vin || (vehicleHints.rego && vehicleHints.state))) {
       try {
         const canonical = await upsertCanonical({
-          vin: ppsr.vehicle.vin,
-          rego: ppsr.vehicle.rego,
-          rego_state: ppsr.vehicle.state,
-          make: ppsr.vehicle.make || 'Unknown',
-          model: ppsr.vehicle.model || 'Unknown',
-          year: ppsr.vehicle.year || 2020,
+          vin: vehicleHints.vin,
+          rego: vehicleHints.rego,
+          rego_state: vehicleHints.state,
+          make: vehicleHints.make || 'Unknown',
+          model: vehicleHints.model || 'Unknown',
+          year: vehicleHints.year || 2020,
         });
         canonicalId = canonical.id;
       } catch {
@@ -98,30 +144,55 @@ export async function runReport(reportId: string): Promise<Report> {
       }
     }
 
-    const market = rangeFromCanonicalMock(ppsr.vehicle.make, ppsr.vehicle.model, ppsr.vehicle.year);
+    const market = await rangeFromMarket(vehicleHints.make, vehicleHints.model, vehicleHints.year);
 
+    // Compose the human-readable findings.
     const reasons: string[] = [];
-    if (ppsr.encumbrances.length > 0) reasons.push(`${ppsr.encumbrances.length} active financial encumbrance(s) — title not clean.`);
-    if (ppsr.write_off.is_write_off) reasons.push(`Write-off recorded (${ppsr.write_off.category}) in ${ppsr.write_off.state}.`);
+    if (ppsr.encumbrances.length > 0)
+      reasons.push(`${ppsr.encumbrances.length} active financial encumbrance(s) — title not clean.`);
+    if (ppsr.write_off.is_write_off)
+      reasons.push(`Write-off recorded (${ppsr.write_off.category}) in ${ppsr.write_off.state}.`);
     if (ppsr.stolen.is_stolen) reasons.push('Reported stolen — DO NOT purchase.');
+    if (nevdis?.odometer_inconsistency)
+      reasons.push('Odometer inconsistency detected across registration history — possible rollback.');
+    if (nevdis && nevdis.state_transfer_count >= 4)
+      reasons.push(
+        `Vehicle has been transferred between ${nevdis.state_transfer_count} states — unusually high mobility, investigate provenance.`
+      );
+    if (nevdis?.written_off.is_write_off && !ppsr.write_off.is_write_off)
+      reasons.push(
+        `NEVDIS records a write-off (${nevdis.written_off.category}) in ${nevdis.written_off.state}; not yet visible on PPSR.`
+      );
 
-    const headline: ReportSummary['headline'] = ppsr.stolen.is_stolen || ppsr.write_off.is_write_off
+    const isStolen = ppsr.stolen.is_stolen || !!nevdis?.stolen.is_stolen;
+    const isWriteOff = ppsr.write_off.is_write_off || !!nevdis?.written_off.is_write_off;
+    const isEncumbered = ppsr.encumbrances.length > 0;
+    const odoBad = !!nevdis?.odometer_inconsistency;
+
+    const headline: ReportSummary['headline'] = isStolen || isWriteOff
       ? 'do_not_buy'
-      : ppsr.encumbrances.length > 0
+      : isEncumbered || odoBad
         ? 'caution'
         : 'clear';
 
     const recommended_action =
       headline === 'do_not_buy'
-        ? 'Walk away. The vehicle has a serious recorded issue that will affect title or safety.'
+        ? 'Walk away. The vehicle has a serious recorded issue that will affect title, safety or insurability.'
         : headline === 'caution'
-          ? 'Negotiate down or insist seller clears encumbrance before settlement (settle through a solicitor).'
+          ? 'Negotiate down (or insist seller clears the encumbrance / proves odometer history) before settlement. Settle through a solicitor.'
           : 'Title appears clean. Compare ask to market range and proceed with standard inspection.';
 
     const summary: ReportSummary = {
       headline,
       reasons,
       market_value: market,
+      registration: nevdis
+        ? summariseRegistration(nevdis)
+        : {
+            states_registered: row.requested_state ? [row.requested_state] : [],
+            state_transfer_count: 0,
+            odometer_inconsistency: false,
+          },
       recommended_action,
       generated_at: new Date().toISOString(),
     };
@@ -131,6 +202,7 @@ export async function runReport(reportId: string): Promise<Report> {
       .set({
         status: 'ready',
         ppsr_payload: ppsr as any,
+        nevdis_payload: (nevdis ?? { error: nevdisRes.status === 'rejected' ? String((nevdisRes as PromiseRejectedResult).reason?.message || nevdisRes.reason) : 'not_run' }) as any,
         market_value_payload: market as any,
         summary: summary as any,
         vehicle_canonical_id: canonicalId,

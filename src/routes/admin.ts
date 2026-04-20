@@ -8,6 +8,7 @@ import {
   deleteListing,
   getListingStats,
 } from '../services/listings';
+import { runWatchlistDigest } from '../services/digest';
 import { apiLimiter } from '../middleware/rate-limit';
 import { requireAdmin } from '../middleware/auth';
 import { asyncHandler, AppError } from '../middleware/error-handler';
@@ -185,6 +186,45 @@ router.delete(
     await deleteListing(id);
 
     res.json({ message: 'Listing deleted successfully' });
+  })
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  POST /api/admin/digest/run — manual trigger for the watchlist digest
+//
+//  Mirrors the cron entrypoint at scripts/digest-cron.ts. Useful for QA in
+//  staging and for running an ad-hoc digest before official campaigns.
+//  Body:
+//    { windowDays?: number, dryRun?: boolean }
+// ─────────────────────────────────────────────────────────────────────────────
+
+const digestRunSchema = z.object({
+  windowDays: z.number().int().min(1).max(60).optional(),
+  dryRun: z.boolean().optional(),
+});
+
+router.post(
+  '/digest/run',
+  apiLimiter,
+  requireAdmin,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { windowDays = 7, dryRun = false } = digestRunSchema.parse(req.body ?? {});
+    const result = await runWatchlistDigest(windowDays, dryRun);
+    res.json({
+      windowDays,
+      dryRun,
+      totalUsers: result.totalUsers,
+      totalAlerts: result.totalAlerts,
+      totalListingsSurfaced: result.totalListingsSurfaced,
+      sends: result.sends.map((s) => ({
+        userId: s.userId,
+        email: s.email,
+        provider: s.result.provider,
+        status: s.result.status,
+        id: s.result.id,
+        error: s.result.error,
+      })),
+    });
   })
 );
 

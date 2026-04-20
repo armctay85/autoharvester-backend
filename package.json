@@ -13,7 +13,9 @@
     "db:push": "drizzle-kit push:pg",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/services/__tests__/*.test.ts"
+    "test": "node --import tsx --test src/services/__tests__/*.test.ts",
+    "digest:run": "tsx src/scripts/digest-cron.ts",
+    "digest:dry": "DIGEST_DRY_RUN=true tsx src/scripts/digest-cron.ts"
   },
   "keywords": [
     "cars",
